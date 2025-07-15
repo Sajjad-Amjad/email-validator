@@ -7,7 +7,7 @@ try:
 except ImportError:
     print("email-validator not installed")
     
-from config import MAX_WORKERS, BATCH_SIZE
+from config import MAX_WORKERS, BATCH_SIZE, TEST_EMAIL_RECIPIENT
 from core.dns_checker import DNSChecker
 from core.smtp_checker import SMTPChecker
 from core.geo_locator import GeoLocator
@@ -18,207 +18,236 @@ logger = setup_logger(__name__)
 
 class EmailValidator:
     def __init__(self, proxy_list: List[str] = None):
-        logger.info("Initializing EmailValidator")
+        logger.info("Initializing EmailValidator with modified validation approach")
         self.dns_checker = DNSChecker()
         self.smtp_checker = SMTPChecker()
         self.geo_locator = GeoLocator()
         self.proxy_manager = ProxyManager(proxy_list)
         
+        # Extended disposable domains list
         self.disposable_domains = {
             '10minutemail.com', 'tempmail.org', 'guerrillamail.com',
-            'mailinator.com', 'yopmail.com', 'throwaway.email'
+            'mailinator.com', 'yopmail.com', 'throwaway.email',
+            'temp-mail.org', 'emailondeck.com', 'sharklasers.com',
+            'getnada.com', 'maildrop.cc', 'guerrillamail.info',
+            'guerrillamail.biz', 'guerrillamail.de', 'guerrillamail.net',
+            'guerrillamail.org', 'guerrillamailblock.com', 'inboxalias.com',
+            'jetable.org', 'mailtemp.info', 'mytemp.email',
+            'spambox.us', 'tempmailaddress.com', 'mailnesia.com',
+            'mohmal.com', 'burnermail.io', 'dropmail.me'
         }
         
+        logger.info("EmailValidator initialized successfully")
+        
     def validate_email_syntax(self, email: str) -> Dict:
+        """Validate email syntax according to IETF/RFC standards"""
+        logger.debug(f"Validating syntax for: {email}")
         try:
+            # Use email_validator for RFC compliance
             valid = validate_email(email)
             local_part = email.split('@')[0]
             domain_part = valid.domain if hasattr(valid, 'domain') else email.split('@')[1]
             
-            return {
+            result = {
                 'valid': True,
                 'normalized': valid.email,
                 'local': local_part,
                 'domain': domain_part
             }
+            logger.debug(f"Syntax validation passed for: {email}")
+            return result
         except EmailNotValidError as e:
-            return {
+            result = {
                 'valid': False,
                 'error': str(e),
                 'normalized': None,
                 'local': None,
                 'domain': None
             }
+            logger.debug(f"Syntax validation failed for {email}: {e}")
+            return result
     
     def is_disposable_email(self, domain: str) -> bool:
-        return domain.lower() in self.disposable_domains
+        """Check if domain is disposable/temporary email"""
+        is_disposable = domain.lower() in self.disposable_domains
+        logger.debug(f"Disposable check for {domain}: {is_disposable}")
+        return is_disposable
     
-    def calculate_email_score(self, checks: Dict) -> str:
-        """Calculate quality score based on multiple validation checks"""
-        score = 0
-        max_score = 100
+    def detect_misspelled_domain(self, domain: str) -> Dict:
+        """Detect common domain misspellings"""
+        common_domains = {
+            'gmail.com': ['gmai.com', 'gmail.co', 'gmial.com', 'gmaill.com'],
+            'yahoo.com': ['yaho.com', 'yahoo.co', 'yhoo.com', 'yahooo.com'],
+            'hotmail.com': ['hotmai.com', 'hotmial.com', 'homail.com'],
+            'outlook.com': ['outlok.com', 'outloo.com', 'outlookk.com'],
+            'aol.com': ['aol.co', 'ao.com', 'aoll.com'],
+        }
         
-        # Syntax check (20 points)
-        if checks.get('syntax_valid', False):
-            score += 20
-        
-        # Domain existence (25 points)
-        if checks.get('domain_exists', False):
-            score += 25
-        
-        # MX records (25 points) 
-        if checks.get('has_mx_records', False):
-            score += 25
-        elif checks.get('has_a_records', False):
-            score += 15  # Fallback to A records
-        
-        # SMTP connectivity (20 points)
-        if checks.get('smtp_connectable', False):
-            score += 20
-        elif checks.get('smtp_attempted', False):
-            score += 10  # Partial credit for attempt
-        
-        # Domain reputation (10 points)
-        if checks.get('trusted_domain', False):
-            score += 10
-        elif checks.get('business_domain', False):
-            score += 5
-        
-        # Determine quality based on score
-        percentage = (score / max_score) * 100
-        
-        if percentage >= 80:
-            return 'VALID'
-        elif percentage >= 60:
-            return 'PROBABLY_VALID'
-        elif percentage >= 40:
-            return 'PROBABLY_INVALID'
-        else:
-            return 'INVALID'
-    
-    def check_domain_reputation(self, domain: str) -> Dict:
-        """Check domain reputation and type"""
         domain_lower = domain.lower()
         
-        # Major email providers
-        major_providers = {
-            'gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com',
-            'live.com', 'aol.com', 'icloud.com', 'protonmail.com'
-        }
+        for correct_domain, misspellings in common_domains.items():
+            if domain_lower in misspellings:
+                return {
+                    'is_misspelled': True,
+                    'suggested_domain': correct_domain,
+                    'confidence': 0.9
+                }
         
-        # Educational domains
-        edu_patterns = ['.edu', '.ac.uk', '.ac.', '.sch.uk', '.edu.au']
+        # Check for similar domains using basic string similarity
+        for correct_domain in common_domains.keys():
+            if self._similarity_score(domain_lower, correct_domain) > 0.8:
+                return {
+                    'is_misspelled': True,
+                    'suggested_domain': correct_domain,
+                    'confidence': 0.7
+                }
         
-        # Government domains  
-        gov_patterns = ['.gov', '.gov.uk', '.gov.au']
+        return {'is_misspelled': False, 'suggested_domain': None, 'confidence': 0.0}
+    
+    def _similarity_score(self, s1: str, s2: str) -> float:
+        """Simple similarity score between two strings"""
+        if len(s1) == 0 or len(s2) == 0:
+            return 0.0
         
-        # Business indicators
-        business_patterns = ['.com', '.co.uk', '.org', '.net', '.biz']
+        # Simple character-based similarity
+        common_chars = set(s1) & set(s2)
+        all_chars = set(s1) | set(s2)
         
-        reputation = {
-            'trusted_domain': domain_lower in major_providers,
-            'educational': any(pattern in domain_lower for pattern in edu_patterns),
-            'government': any(pattern in domain_lower for pattern in gov_patterns),
-            'business_domain': any(domain_lower.endswith(pattern) for pattern in business_patterns)
-        }
-        
-        return reputation
+        return len(common_chars) / len(all_chars) if all_chars else 0.0
     
     def validate_single_email(self, email: str, password: str = "") -> Dict:
-        """Professional email validation with scoring system"""
+        """
+        Strict professional email validation:
+        Only returns 'VALID' if syntax, DNS, MX, SMTP, and RCPT TO all pass.
+        Otherwise returns 'INVALID'.
+        """
         logger.info(f"Validating: {email}")
-        
+
         result = {
             'email': email,
             'password': password,
-            'status': 'INVALID',
+            'status': 'INVALID',  # Default
             'country': 'Unknown',
             'details': []
         }
-        
-        checks = {}
-        
+
         try:
-            # Step 1: Syntax validation
+            # 1. Syntax check
             syntax_result = self.validate_email_syntax(email)
-            checks['syntax_valid'] = syntax_result['valid']
-            
             if not syntax_result['valid']:
                 result['details'].append(f"Invalid syntax: {syntax_result.get('error', 'Unknown')}")
-                result['status'] = self.calculate_email_score(checks)
+                logger.info(f"Validation completed for {email}: INVALID (syntax)")
                 return result
-            
+
             domain = syntax_result['domain']
-            result['details'].append("Valid syntax")
-            
-            # Step 2: Disposable check
+
+            # 2. Disposable check
             if self.is_disposable_email(domain):
                 result['details'].append("Disposable email domain")
-                result['status'] = 'SKIPPED'
+                result['status'] = "SKIPPED"
+                logger.info(f"Validation completed for {email}: SKIPPED (disposable)")
                 return result
-            
-            # Step 3: Domain reputation check
-            reputation = self.check_domain_reputation(domain)
-            checks.update(reputation)
-            
-            # Step 4: DNS validation (more lenient)
+
+            # 3. DNS/MX check
             dns_result = self.dns_checker.validate_domain(domain)
-            checks['domain_exists'] = True  # If we got here, domain exists
-            checks['has_mx_records'] = dns_result['mx_info']['has_mx']
-            checks['has_a_records'] = dns_result['a_info']['has_a']
-            
-            if dns_result['is_valid']:
-                result['details'].append("Valid DNS records")
-            else:
-                result['details'].append("Limited DNS records")
-            
-            # Step 5: Country detection
+            if not dns_result['is_valid']:
+                result['details'].append("Domain does not exist or DNS lookup failed")
+                logger.info(f"Validation completed for {email}: INVALID (domain/DNS)")
+                return result
+
+            if not dns_result['mx_info']['has_mx']:
+                result['details'].append("No MX record for domain")
+                logger.info(f"Validation completed for {email}: INVALID (no MX)")
+                return result
+
+            primary_mx = dns_result['mx_info']['primary_mx']
+            if not primary_mx:
+                result['details'].append("No primary MX server found")
+                logger.info(f"Validation completed for {email}: INVALID (no primary MX)")
+                return result
+
+            # 4. SMTP connection
+            smtp_result = self.smtp_checker.check_smtp_connection(primary_mx)
+            if not smtp_result['smtp_valid']:
+                result['details'].append("SMTP server not reachable or port closed")
+                logger.info(f"Validation completed for {email}: INVALID (SMTP conn)")
+                return result
+
+            # 5. RCPT TO (mailbox existence)
+            delivery_result = self.smtp_checker.verify_email_deliverability(email, primary_mx)
+            if not delivery_result['deliverable']:
+                msg = delivery_result.get('smtp_message', 'Mailbox rejected')
+                result['details'].append(f"Mailbox rejected: {msg}")
+                logger.info(f"Validation completed for {email}: INVALID (RCPT TO fail)")
+                return result
+
+            # 6. (Optional) Country detection
             proxy = self.proxy_manager.get_working_proxy()
             geo_result = self.geo_locator.get_email_country(email, proxy)
             result['country'] = geo_result['country']
-            
-            # Step 6: SMTP validation (attempt but don't fail hard)
-            checks['smtp_attempted'] = True
-            
-            if dns_result['mx_info']['has_mx']:
-                primary_mx = dns_result['mx_info']['primary_mx']
-                if primary_mx:
-                    smtp_result = self.smtp_checker.check_smtp_connection(primary_mx)
-                    checks['smtp_connectable'] = smtp_result['smtp_valid']
-                    
-                    if smtp_result['smtp_valid']:
-                        result['details'].append("SMTP connection successful")
-                        
-                        # Deliverability test (lenient)
-                        delivery_result = self.smtp_checker.verify_email_deliverability(email, primary_mx)
-                        if delivery_result['deliverable']:
-                            result['details'].append("Email deliverable")
-                        else:
-                            result['details'].append("SMTP accessible but delivery uncertain")
-                    else:
-                        result['details'].append("SMTP connection timeout")
-                else:
-                    result['details'].append("No primary MX server")
-            else:
-                # Check if domain has A records as fallback
-                if checks['has_a_records']:
-                    result['details'].append("Domain accessible via A records")
-                else:
-                    result['details'].append("No MX or A records")
-            
-            # Calculate final score
-            result['status'] = self.calculate_email_score(checks)
-            
-            logger.info(f"Validation completed for {email}: {result['status']}")
+
+            # If all passed
+            result['details'].append("All checks passed, mailbox exists")
+            result['status'] = "VALID"
+            logger.info(f"Validation completed for {email}: VALID")
             return result
-            
+
         except Exception as e:
             result['details'].append(f"Validation error: {str(e)}")
             logger.error(f"Error validating {email}: {e}")
+            result['status'] = "INVALID"
             return result
+
+    
+    def assess_spam_trap_risk(self, email: str, domain: str, validation_score: int) -> str:
+        """Assess spam trap risk based on various factors"""
+        risk_score = 0
+        
+        # Check for suspicious patterns
+        local_part = email.split('@')[0]
+        
+        # Common spam trap patterns
+        spam_patterns = [
+            'test', 'admin', 'info', 'support', 'sales', 'marketing',
+            'webmaster', 'postmaster', 'noreply', 'no-reply',
+            'abuse', 'spam', 'trap', 'honeypot'
+        ]
+        
+        if local_part.lower() in spam_patterns:
+            risk_score += 30
+        
+        # Check for random character patterns
+        if len(local_part) > 15 and any(char.isdigit() for char in local_part):
+            random_chars = sum(1 for char in local_part if char.isdigit())
+            if random_chars > len(local_part) * 0.4:
+                risk_score += 20
+        
+        # Domain reputation check
+        suspicious_domains = [
+            'example.com', 'test.com', 'invalid.com',
+            'fake.com', 'dummy.com', 'sample.com'
+        ]
+        
+        if domain.lower() in suspicious_domains:
+            risk_score += 40
+        
+        # Validation score factor
+        if validation_score < 30:
+            risk_score += 20
+        elif validation_score < 50:
+            risk_score += 10
+        
+        # Determine risk level
+        if risk_score >= 50:
+            return 'HIGH'
+        elif risk_score >= 25:
+            return 'MEDIUM'
+        else:
+            return 'LOW'
     
     def validate_batch(self, email_list: List[Tuple[str, str]]) -> List[Dict]:
-        logger.info(f"Batch validation: {len(email_list)} emails")
+        """Validate batch of emails with multi-threading"""
+        logger.info(f"Starting batch validation for {len(email_list)} emails")
         results = []
         
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
@@ -231,6 +260,7 @@ class EmailValidator:
                 try:
                     result = future.result()
                     results.append(result)
+                    logger.debug(f"Batch item completed: {result['email']} -> {result['status']} (SMTP: {result.get('smtp_auth_result', 'N/A')})")
                 except Exception as e:
                     email, password = future_to_email[future]
                     logger.error(f"Batch error for {email}: {e}")
@@ -239,7 +269,11 @@ class EmailValidator:
                         'password': password,
                         'status': 'INVALID',
                         'country': 'Unknown',
-                        'details': [f"Processing error: {str(e)}"]
+                        'details': [f"Processing error: {str(e)}"],
+                        'validation_score': 0,
+                        'spam_trap_risk': 'HIGH',
+                        'smtp_auth_result': 'ERROR'
                     })
         
+        logger.info(f"Batch validation completed: {len(results)} results")
         return results
