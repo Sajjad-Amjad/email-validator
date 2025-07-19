@@ -66,69 +66,47 @@ class FileHandler:
 
     
     def read_input_files(self) -> List[Tuple[str, str, str]]:
-        """Read all .txt files from input folder with email:password format"""
-        logger.info(f"Reading email files from: {self.input_folder}")
-        
-        email_data = []
-        
-        # Get all .txt files in input folder
-        txt_files = [f for f in os.listdir(self.input_folder) 
-                    if f.endswith('.txt') and f != 'proxies.txt']
-        
+        """Read all .txt files from input folder, supporting email:password, email, and domain"""
+        logger.info(f"Reading files from: {self.input_folder}")
+        data = []
+
+        txt_files = [f for f in os.listdir(self.input_folder) if f.endswith('.txt') and f != 'proxies.txt']
         if not txt_files:
             logger.warning("No .txt files found in input folder")
-            return email_data
-        
+            return data
+
         for filename in txt_files:
             filepath = os.path.join(self.input_folder, filename)
-            file_emails = self._read_email_file(filepath, filename)
-            email_data.extend(file_emails)
-            
-            # Initialize per-file results tracking
-            if filename not in self.per_file_results:
-                self.per_file_results[filename] = []
-        
-        logger.info(f"Total email records loaded: {len(email_data)} from {len(txt_files)} files")
-        return email_data
-    
-    def _read_email_file(self, filepath: str, filename: str) -> List[Tuple[str, str, str]]:
-        """Read email:password pairs from a single file"""
-        logger.info(f"Processing email file: {filename}")
-        
-        email_data = []
-        
-        try:
             with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
                 for line_num, line in enumerate(f, 1):
                     line = line.strip()
-                    
-                    # Skip empty lines and comments
                     if not line or line.startswith('#'):
                         continue
-                    
-                    # Parse email:password format
+                    # Email:Password
                     if ':' in line:
-                        parts = line.split(':', 1)  # Split only on first colon
+                        parts = line.split(':', 1)
                         if len(parts) == 2:
-                            email = parts[0].strip()
+                            email_or_domain = parts[0].strip()
                             password = parts[1].strip()
-                            
-                            # Basic email validation
-                            if '@' in email and '.' in email:
-                                email_data.append((email, password, filename))
-                            else:
-                                logger.warning(f"Invalid email format at {filename}:{line_num}: {email}")
+                            data.append((email_or_domain, password, filename))
                         else:
                             logger.warning(f"Invalid line format at {filename}:{line_num}: {line}")
                     else:
-                        logger.warning(f"Missing colon separator at {filename}:{line_num}: {line}")
-            
-            logger.info(f"Loaded {len(email_data)} emails from {filename}")
-            
-        except Exception as e:
-            logger.error(f"Error reading file {filepath}: {e}")
-        
-        return email_data
+                        # Could be email or domain
+                        if '@' in line and '.' in line:
+                            # Email without password
+                            data.append((line, '', filename))
+                        elif '.' in line:
+                            # Domain only
+                            data.append((line, '', filename))
+                        else:
+                            logger.warning(f"Unknown line format at {filename}:{line_num}: {line}")
+            if filename not in self.per_file_results:
+                self.per_file_results[filename] = []
+
+        logger.info(f"Total records loaded: {len(data)} from {len(txt_files)} files")
+        return data
+
     
     def add_result_to_file(self, result: Dict, source_file: str):
         """Add validation result to per-file tracking"""
@@ -152,6 +130,9 @@ class FileHandler:
         
         # Write SMTP authentication results separately
         self._write_smtp_auth_results(all_results)
+
+        self._write_geo_country_output(all_results)
+
         
         logger.info("All output files written successfully")
     
@@ -314,24 +295,9 @@ class FileHandler:
         smtp_error = [r for r in results if r.get('smtp_auth_result') == 'ERROR']
         
         with open(smtp_file, 'w', encoding='utf-8') as f:
-            f.write("# SMTP AUTHENTICATION RESULTS\n")
-            f.write(f"# Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-            f.write("# This file contains SMTP authentication test results\n")
-            f.write("# Note: SMTP auth success means the email can actually send emails\n\n")
-            
-            f.write("="*60 + "\n")
-            f.write("SMTP AUTHENTICATION SUMMARY\n")
-            f.write("="*60 + "\n")
-            f.write(f"SUCCESS: {len(smtp_success)} emails can send emails\n")
-            f.write(f"FAILED: {len(smtp_failed)} emails cannot authenticate\n")
-            f.write(f"NOT TESTED: {len(smtp_not_tested)} emails not tested\n")
-            f.write(f"ERROR: {len(smtp_error)} emails had errors\n\n")
             
             # Write successful SMTP authentications
             if smtp_success:
-                f.write("="*60 + "\n")
-                f.write("✅ EMAILS THAT CAN SEND (SMTP AUTH SUCCESS)\n")
-                f.write("="*60 + "\n")
                 for result in smtp_success:
                     country = result.get('country', 'Unknown')
                     f.write(f"{result['email']}:{result['password']} | {country} | ✅ Can send emails\n")
@@ -339,9 +305,6 @@ class FileHandler:
             
             # Write failed SMTP authentications
             if smtp_failed:
-                f.write("="*60 + "\n")
-                f.write("❌ EMAILS THAT CANNOT SEND (SMTP AUTH FAILED)\n")
-                f.write("="*60 + "\n")
                 for result in smtp_failed:
                     country = result.get('country', 'Unknown')
                     # Find SMTP-related details
@@ -352,11 +315,6 @@ class FileHandler:
             
             # Write not tested
             if smtp_not_tested:
-                f.write("="*60 + "\n")
-                f.write("⚠️ EMAILS NOT TESTED FOR SMTP AUTH\n")
-                f.write("="*60 + "\n")
-                f.write("# These emails passed basic validation but SMTP auth was not tested\n")
-                f.write("# Reasons: No password provided, SMTP connection failed, etc.\n\n")
                 for result in smtp_not_tested:
                     country = result.get('country', 'Unknown')
                     status = result.get('status', 'UNKNOWN')
@@ -409,3 +367,28 @@ class FileHandler:
             }
         
         return stats
+    
+    def _write_geo_country_output(self, all_results: List[Dict]):
+        """
+        Write each domain/email to country-based output files, e.g. output/countries/UK.txt
+        Only 'VALID' status entries are considered.
+        """
+        country_folder = os.path.join(self.output_folder, "countries")
+        os.makedirs(country_folder, exist_ok=True)
+
+        country_map = {}
+        for result in all_results:
+            if result['status'] == 'VALID':
+                country = result.get('country', 'Unknown')
+                if country not in country_map:
+                    country_map[country] = []
+                # Output just the domain for domains, or email for emails
+                country_map[country].append(result['email'])
+
+        for country, items in country_map.items():
+            safe_country = country.replace(" ", "_").replace("/", "-")
+            out_path = os.path.join(country_folder, f"{safe_country}.txt")
+            with open(out_path, 'w', encoding='utf-8') as f:
+                for item in items:
+                    f.write(item + '\n')
+        logger.info(f"Wrote geo/country output to {country_folder}")

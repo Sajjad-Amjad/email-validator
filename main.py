@@ -1,10 +1,4 @@
-#!/usr/bin/env python3
-"""
-Email Validator - Bulk Email Verification Tool
-Client: michaellangf707
-Modified Approach: Validate emails without requiring SMTP authentication
-Features: Email validation, country detection, optional SMTP testing, proxy support
-"""
+
 
 import sys
 import time
@@ -28,7 +22,7 @@ def setup_test_email():
     import config
     
     if not config.TEST_EMAIL_RECIPIENT:
-        print("\n📧 SMTP Authentication Test Configuration (Optional)")
+        print("\nSMTP Authentication Test Configuration (Optional)")
         print("=" * 60)
         print("For emails that can authenticate, we can send a test email to verify sending.")
         print("This is OPTIONAL - emails are marked VALID based on other validation tests.")
@@ -39,14 +33,14 @@ def setup_test_email():
         if test_email and '@' in test_email and '.' in test_email:
             config.TEST_EMAIL_RECIPIENT = test_email
             logger.info(f"Test email recipient configured: {test_email}")
-            print(f"✅ SMTP auth test emails will be sent to: {test_email}")
+            print(f"SMTP auth test emails will be sent to: {test_email}")
         else:
             config.TEST_EMAIL_RECIPIENT = ""
             logger.info("No test email recipient configured")
-            print("⚠️ SMTP authentication testing disabled")
+            print("SMTP authentication testing disabled")
     else:
         logger.info(f"Test email already configured: {config.TEST_EMAIL_RECIPIENT}")
-        print(f"✅ SMTP auth tests will send to: {config.TEST_EMAIL_RECIPIENT}")
+        print(f"SMTP auth tests will send to: {config.TEST_EMAIL_RECIPIENT}")
 
 def format_time(seconds: float) -> str:
     """Format seconds into human readable time"""
@@ -62,15 +56,11 @@ def format_time(seconds: float) -> str:
 def main():
     """Main validation process"""
     print("=" * 70)
-    print("🚀 EMAIL VALIDATOR - BULK EMAIL VERIFICATION TOOL")
+    print("EMAIL VALIDATOR - BULK EMAIL VERIFICATION TOOL")
     print("=" * 70)
-    print("✨ Features: Email validation, country detection, optional SMTP testing")
-    print("🔄 Supports: Proxy rotation, multi-threading, progress tracking")
-    print("📊 Outputs: CSV/TXT files with detailed results")
-    print("🎯 Approach: Validate emails without requiring SMTP authentication")
     print("=" * 70)
     
-    logger.info("Starting email validation application with modified approach")
+    logger.info("Starting email validation")
     
     # Initialize components
     file_handler = FileHandler()
@@ -83,7 +73,7 @@ def main():
         print(f"🔗 Loaded {len(proxy_list)} proxies from proxies.txt")
         logger.info(f"Loaded {len(proxy_list)} proxies from file")
     else:
-        print("🌐 Running without proxies (using direct connection)")
+        print("Running without proxies (using direct connection)")
         logger.info("No proxies loaded - running with direct connection")
     
     # Initialize validator
@@ -96,9 +86,9 @@ def main():
     email_data = file_handler.read_input_files()
     
     if not email_data:
-        print("\n❌ ERROR: No email files found in data/input/ folder")
-        print("📁 Please add .txt files with email:password format")
-        print("📄 Example: user@domain.com:password123")
+        print("\nERROR: No email files found in data/input/ folder")
+        print("Please add .txt files with email:password format")
+        print("Example: user@domain.com:password123")
         return
     
     # Filter already processed emails
@@ -110,23 +100,19 @@ def main():
     total_to_process = len(unprocessed_data)
     total_files = len(set(item[2] for item in email_data))
     
-    print(f"\n📈 PROCESSING SUMMARY:")
-    print(f"📧 Total emails to process: {total_to_process:,}")
-    print(f"📁 Input files: {total_files}")
-    print(f"⚡ Batch size: {BATCH_SIZE}")
+    print(f"\nPROCESSING SUMMARY:")
+    print(f"Total emails to process: {total_to_process:,}")
+    print(f"Input files: {total_files}")
+    print(f"Batch size: {BATCH_SIZE}")
     
     # Import config to get current test email
     import config
     current_test_recipient = getattr(config, 'TEST_EMAIL_RECIPIENT', 'Not configured')
     if current_test_recipient:
-        print(f"📧 SMTP auth test recipient: {current_test_recipient}")
+        print(f"SMTP auth test recipient: {current_test_recipient}")
     else:
-        print(f"📧 SMTP auth testing: Disabled")
+        print(f"SMTP auth testing: Disabled")
     
-    print(f"\n🎯 VALIDATION APPROACH:")
-    print(f"✅ Emails marked VALID based on: Syntax + DNS + SMTP Connection + Mailbox")
-    print(f"📧 SMTP authentication tested separately (optional)")
-    print(f"📊 Higher success rates expected with this approach")
     
     if total_to_process == 0:
         print("\n✅ All emails already processed!")
@@ -195,23 +181,12 @@ def main():
     # Cleanup
     progress_tracker.cleanup()
     
-    print(f"\n🎉 PROCESSING COMPLETED!")
-    print(f"⏱️  Total time: {format_time(total_time)}")
-    print(f"⚡ Speed: {emails_per_second:.1f} emails/second")
-    print(f"📊 Results saved to: data/output/")
-    print(f"📁 Files created:")
-    print(f"   📈 summary.csv - Overview of all results")
-    print(f"   📧 valid.txt - Emails that passed validation")
-    print(f"   ❌ invalid.txt - Emails that failed validation")
-    print(f"   📬 smtp_auth_results.txt - SMTP authentication results")
-    print("=" * 70)
-    
     logger.info(f"Processing completed in {format_time(total_time)}")
 
 def show_final_summary(file_handler, progress_tracker):
     """Show detailed final validation summary"""
     print("\n" + "=" * 70)
-    print("📊 FINAL VALIDATION SUMMARY")
+    print("FINAL VALIDATION SUMMARY")
     print("=" * 70)
     
     try:
@@ -229,10 +204,10 @@ def show_final_summary(file_handler, progress_tracker):
         invalid_pct = (invalid_count / total_processed * 100) if total_processed > 0 else 0
         skipped_pct = (skipped_count / total_processed * 100) if total_processed > 0 else 0
         
-        print(f"✅ VALID emails: {valid_count:,} ({valid_pct:.1f}%)")
-        print(f"❌ INVALID emails: {invalid_count:,} ({invalid_pct:.1f}%)")
-        print(f"⚠️  SKIPPED emails: {skipped_count:,} ({skipped_pct:.1f}%)")
-        print(f"📧 TOTAL processed: {total_processed:,}")
+        print(f"VALID emails: {valid_count:,} ({valid_pct:.1f}%)")
+        print(f"INVALID emails: {invalid_count:,} ({invalid_pct:.1f}%)")
+        print(f"SKIPPED emails: {skipped_count:,} ({skipped_pct:.1f}%)")
+        print(f"OTAL processed: {total_processed:,}")
         
         # SMTP Authentication Summary
         smtp_success = sum(1 for r in results if r.get('smtp_auth_result') == 'SUCCESS')
@@ -262,9 +237,9 @@ def show_final_summary(file_handler, progress_tracker):
         if results:
             scores = [r.get('validation_score', 0) for r in results]
             avg_score = sum(scores) / len(scores) if scores else 0
-            print(f"\n📊 VALIDATION SCORES:")
-            print(f"📈 Average score: {avg_score:.1f}/100")
-            print(f"📊 Score distribution:")
+            print(f"\nVALIDATION SCORES:")
+            print(f"Average score: {avg_score:.1f}/100")
+            print(f"Score distribution:")
             
             score_ranges = {
                 '81-100': sum(1 for s in scores if s >= 81),
@@ -278,30 +253,24 @@ def show_final_summary(file_handler, progress_tracker):
                 if count > 0:
                     print(f"   📊 {score_range}: {count} emails")
         
-        # Show improvement
-        print(f"\n🎯 APPROACH BENEFITS:")
-        print(f"✅ Higher success rate (validation without SMTP auth requirement)")
-        print(f"⚡ Faster processing (reduced timeouts)")
-        print(f"📧 SMTP auth tested separately for additional insights")
-        print(f"📊 More usable emails for your campaigns")
         
         logger.info(f"Final summary - Valid: {valid_count}, Invalid: {invalid_count}, Skipped: {skipped_count}")
         logger.info(f"SMTP auth summary - Success: {smtp_success}, Failed: {smtp_failed}, Not tested: {smtp_not_tested}")
         
     except Exception as e:
         logger.error(f"Error showing summary: {e}")
-        print("❌ Error generating summary")
+        print("Error generating summary")
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print("\n\n⚠️  Process interrupted by user")
+        print("\n\nProcess interrupted by user")
         logger.info("Process interrupted by user")
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
         import traceback
         logger.error(f"Full traceback: {traceback.format_exc()}")
-        print(f"\n❌ Unexpected error: {e}")
-        print("📝 Check logs for details")
+        print(f"\n Unexpected error: {e}")
+        print("Check logs for details")
         sys.exit(1)

@@ -18,7 +18,6 @@ logger = setup_logger(__name__)
 
 class EmailValidator:
     def __init__(self, proxy_list: List[str] = None):
-        logger.info("Initializing EmailValidator with modified validation approach")
         self.dns_checker = DNSChecker()
         self.smtp_checker = SMTPChecker()
         self.geo_locator = GeoLocator()
@@ -115,96 +114,154 @@ class EmailValidator:
         
         return len(common_chars) / len(all_chars) if all_chars else 0.0
     
-    def validate_single_email(self, email: str, password: str = "") -> Dict:
+    def validate_single_email(self, email_or_domain: str, password: str = "") -> Dict:
         """
-        Strict professional email validation:
-        Only returns 'VALID' if syntax, DNS, MX, SMTP, and RCPT TO all pass.
-        Otherwise returns 'INVALID'.
+        Validates email or domain.
+        For emails: full validation + optional SMTP auth.
+        For domains: DNS/MX/country only.
         """
-        logger.info(f"Validating: {email}")
+        logger.info(f"Validating: {email_or_domain}")
 
         result = {
-            'email': email,
+            'email': email_or_domain,
             'password': password,
-            'status': 'INVALID',  # Default
+            'status': 'INVALID',
             'country': 'Unknown',
-            'details': []
+            'details': [],
+            'validation_score': 0,
+            'spam_trap_risk': 'UNKNOWN',
+            'smtp_auth_result': 'NOT_TESTED'
         }
 
         try:
-            # 1. Syntax check
-            syntax_result = self.validate_email_syntax(email)
+            # Check if it's a domain (no @ symbol)
+            if '@' not in email_or_domain:
+                # Domain validation
+                domain = email_or_domain
+                dns_result = self.dns_checker.validate_domain(domain)
+                
+                if not dns_result['is_valid']:
+                    result['details'].append("Domain does not exist or DNS lookup failed")
+                    logger.info(f"Validation completed for {domain}: INVALID (domain/DNS)")
+                    return result
+                    
+                if not dns_result['mx_info']['has_mx']:
+                    result['details'].append("No MX record for domain")
+                    logger.info(f"Validation completed for {domain}: INVALID (no MX)")
+                    return result
+                
+                # Country detection for domain
+                proxy = self.proxy_manager.get_working_proxy()
+                geo_result = self.geo_locator.get_email_country(f"info@{domain}", proxy)
+                result['country'] = geo_result.get('country', 'Unknown')
+                
+                result['status'] = 'VALID'
+                result['validation_score'] = 70
+                result['details'].append("Domain is valid (DNS/MX/country checked)")
+                logger.info(f"Validation completed for {domain}: VALID (domain only)")
+                return result
+
+            # Email validation
+            syntax_result = self.validate_email_syntax(email_or_domain)
             if not syntax_result['valid']:
                 result['details'].append(f"Invalid syntax: {syntax_result.get('error', 'Unknown')}")
-                logger.info(f"Validation completed for {email}: INVALID (syntax)")
+                logger.info(f"Validation completed for {email_or_domain}: INVALID (syntax)")
                 return result
 
             domain = syntax_result['domain']
+            result['validation_score'] += 20
 
-            # 2. Disposable check
+            # Disposable check
             if self.is_disposable_email(domain):
                 result['details'].append("Disposable email domain")
                 result['status'] = "SKIPPED"
-                logger.info(f"Validation completed for {email}: SKIPPED (disposable)")
+                logger.info(f"Validation completed for {email_or_domain}: SKIPPED (disposable)")
                 return result
 
-            # 3. DNS/MX check
+            # DNS/MX check
             dns_result = self.dns_checker.validate_domain(domain)
             if not dns_result['is_valid']:
                 result['details'].append("Domain does not exist or DNS lookup failed")
-                logger.info(f"Validation completed for {email}: INVALID (domain/DNS)")
+                logger.info(f"Validation completed for {email_or_domain}: INVALID (domain/DNS)")
                 return result
+
+            result['validation_score'] += 20
 
             if not dns_result['mx_info']['has_mx']:
                 result['details'].append("No MX record for domain")
-                logger.info(f"Validation completed for {email}: INVALID (no MX)")
+                logger.info(f"Validation completed for {email_or_domain}: INVALID (no MX)")
                 return result
+
+            result['validation_score'] += 20
 
             primary_mx = dns_result['mx_info']['primary_mx']
             if not primary_mx:
                 result['details'].append("No primary MX server found")
-                logger.info(f"Validation completed for {email}: INVALID (no primary MX)")
+                logger.info(f"Validation completed for {email_or_domain}: INVALID (no primary MX)")
                 return result
 
-            # 4. SMTP connection
+            # SMTP connection
             smtp_result = self.smtp_checker.check_smtp_connection(primary_mx)
             if not smtp_result['smtp_valid']:
                 result['details'].append("SMTP server not reachable or port closed")
-                logger.info(f"Validation completed for {email}: INVALID (SMTP conn)")
+                logger.info(f"Validation completed for {email_or_domain}: INVALID (SMTP conn)")
                 return result
 
-            # 5. RCPT TO (mailbox existence)
-            delivery_result = self.smtp_checker.verify_email_deliverability(email, primary_mx)
+            result['validation_score'] += 20
+
+            # Mailbox existence check
+            delivery_result = self.smtp_checker.verify_email_deliverability(email_or_domain, primary_mx)
             if not delivery_result['deliverable']:
                 msg = delivery_result.get('smtp_message', 'Mailbox rejected')
                 result['details'].append(f"Mailbox rejected: {msg}")
-                logger.info(f"Validation completed for {email}: INVALID (RCPT TO fail)")
+                logger.info(f"Validation completed for {email_or_domain}: INVALID (RCPT TO fail)")
                 return result
 
-            # 6. (Optional) Country detection
-            proxy = self.proxy_manager.get_working_proxy()
-            geo_result = self.geo_locator.get_email_country(email, proxy)
-            result['country'] = geo_result['country']
+            result['validation_score'] += 20
 
-            # If all passed
+            # Country detection
+            proxy = self.proxy_manager.get_working_proxy()
+            geo_result = self.geo_locator.get_email_country(email_or_domain, proxy)
+            result['country'] = geo_result.get('country', 'Unknown')
+
+            # SMTP Authentication test (if password provided)
+            if password and password.strip():
+                try:
+                    auth_result = self.smtp_checker.test_smtp_authentication(email_or_domain, password)
+                    if auth_result.get('authenticated', False):
+                        result['smtp_auth_result'] = 'SUCCESS'
+                        result['details'].append("SMTP authentication successful")
+                        result['validation_score'] += 20
+                    else:
+                        result['smtp_auth_result'] = 'FAILED'
+                        result['details'].append(f"SMTP authentication failed: {auth_result.get('reason', 'Unknown')}")
+                except Exception as e:
+                    result['smtp_auth_result'] = 'ERROR'
+                    result['details'].append(f"SMTP auth error: {str(e)}")
+
+            # Calculate spam trap risk
+            result['spam_trap_risk'] = self.assess_spam_trap_risk(
+                email_or_domain, domain, result['validation_score']
+            )
+
+            # All checks passed
             result['details'].append("All checks passed, mailbox exists")
             result['status'] = "VALID"
-            logger.info(f"Validation completed for {email}: VALID")
+            logger.info(f"Validation completed for {email_or_domain}: VALID")
             return result
 
         except Exception as e:
             result['details'].append(f"Validation error: {str(e)}")
-            logger.error(f"Error validating {email}: {e}")
+            logger.error(f"Error validating {email_or_domain}: {e}")
             result['status'] = "INVALID"
             return result
-
     
     def assess_spam_trap_risk(self, email: str, domain: str, validation_score: int) -> str:
         """Assess spam trap risk based on various factors"""
         risk_score = 0
         
         # Check for suspicious patterns
-        local_part = email.split('@')[0]
+        local_part = email.split('@')[0] if '@' in email else ''
         
         # Common spam trap patterns
         spam_patterns = [
